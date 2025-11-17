@@ -1,6 +1,7 @@
 """
 Utility functions for JotForm automation
 """
+import html
 import os
 import re
 from reportlab.pdfgen import canvas
@@ -31,17 +32,21 @@ def make_test_pdf(filename="invoice.pdf", output_dir=None):
 
 
 def extract_efs_ref(page_content):
-    """
-    Extract EFS Reference from thank you page content.
-    
-    Args:
-        page_content: HTML content of the page
-    
-    Returns:
-        str: EFS Reference or None if not found
-    """
-    efs_ref_match = re.search(r'EFS Ref:\s*(\S+)', page_content)
-    return efs_ref_match.group(1) if efs_ref_match else None
+    """Extract EFS Reference, handling HTML entities."""
+    patterns = [
+        r'EFS Ref:\s*(?:&nbsp;)?\s*([A-Z0-9_]+)',
+        r'([A-Z]+_PR\d+)',
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, page_content)
+        if match:
+            efs_ref = match.group(1)
+            efs_ref = html.unescape(efs_ref)
+            efs_ref = re.sub(r'<[^>]+>', '', efs_ref).strip()
+            return efs_ref
+
+    return None
 
 
 def extract_edit_link(page_content):

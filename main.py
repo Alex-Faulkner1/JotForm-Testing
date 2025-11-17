@@ -3,12 +3,14 @@ JotForm Payment Request Automation Script
 Automates the multi-stage approval workflow for payment requests
 """
 import asyncio
+
 from playwright.async_api import async_playwright, Page
-from utils import make_test_pdf, extract_efs_ref, extract_edit_link, create_output_folder
+
 from config import (
-    JOTFORM_URL, HEADLESS_MODE, BROWSER_TIMEOUT, TEST_DATA, 
-    EMAILS, WORKFLOW_WAIT_TIME, REDIRECT_TIMEOUT
+    JOTFORM_URL, HEADLESS_MODE, TEST_DATA,
+    EMAILS, WORKFLOW_WAIT_TIME, REDIRECT_TIMEOUT, SLOW_MO
 )
+from utils import make_test_pdf, extract_efs_ref, extract_edit_link, create_output_folder
 
 
 async def wait_for_redirect(page: Page, initial_url: str, timeout: int = REDIRECT_TIMEOUT) -> bool:
@@ -122,20 +124,42 @@ async def fill_inputter_stage(page: Page) -> None:
 async def select_approver(page: Page) -> None:
     """
     Select the approver from dropdown in iframe.
-    
+
     Args:
         page: Playwright page object
     """
-    frame = None
-    for f in page.frames:
-        if "ADDropdown" in (f.name or "") or "ADDropdown" in f.url:
-            frame = f
-            break
+    try:
+        # Wait a bit for iframe to load
+        await page.wait_for_timeout(3000)
 
-    if frame:
+        # Try to find the iframe
+        frame = None
+        frames = page.frames
+        print(f"Found {len(frames)} frames on page")
+
+        for i, f in enumerate(frames):
+            frame_name = f.name or ""
+            frame_url = f.url or ""
+            print(f"Frame {i}: name='{frame_name}', url='{frame_url[:100]}'")
+
+            if "ADDropdown" in frame_name or "ADDropdown" in frame_url:
+                frame = f
+                print(f"Found ADDropdown iframe: {frame_name or frame_url}")
+                break
+
+        if not frame:
+            print("Warning: Approver dropdown iframe not found. Continuing anyway...")
+            print("Available frames:", [f.name or f.url[:50] for f in frames])
+            return
+
+        # Wait for dropdown to be available
+        await frame.wait_for_selector("#input_ADDropdown", timeout=5000)
+
         dropdown = await frame.query_selector("#input_ADDropdown")
         if dropdown:
             options = await dropdown.query_selector_all("option")
+            print(f"Found {len(options)} options in dropdown")
+
             if len(options) > 1:
                 second_value = await options[1].get_attribute("value")
                 await frame.select_option("#input_ADDropdown", value=second_value)
@@ -144,9 +168,11 @@ async def select_approver(page: Page) -> None:
             else:
                 print("Warning: No second option found in approver dropdown")
         else:
-            print("Warning: Approver dropdown not found in iframe")
-    else:
-        print("Warning: Approver dropdown iframe not found.")
+            print("Warning: Approver dropdown element not found in iframe")
+
+    except Exception as e:
+        print(f"Error selecting approver: {str(e)}")
+        print("Continuing without selecting approver...")
 
 
 async def submit_inputter_stage(page: Page) -> tuple[str, str]:
@@ -275,7 +301,11 @@ async def run_automation():
     print(f"Generated test PDF: {TEST_DATA['invoice_filename']}")
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=HEADLESS_MODE)
+        browser = await p.chromium.launch(
+            headless=HEADLESS_MODE,
+            slow_mo=SLOW_MO if not HEADLESS_MODE else 0,
+            args=['--disable-blink-features=AutomationControlled']
+        )
         page = await browser.new_page()
         
         try:

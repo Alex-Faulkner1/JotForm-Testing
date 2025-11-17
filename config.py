@@ -8,8 +8,9 @@ from datetime import date, timedelta
 JOTFORM_URL = "https://eel.jotform.com/252244495892972"
 
 # Browser Settings
-HEADLESS_MODE = True
+HEADLESS_MODE = False
 BROWSER_TIMEOUT = 30000  # milliseconds
+SLOW_MO = 500  # Slow down actions by 500ms for visibility
 
 # Test Data - Inputter Stage
 TEST_DATA = {
@@ -29,8 +30,8 @@ TEST_DATA = {
 
 # Email addresses for testing
 EMAILS = {
-    "pcm_email": "mustapha.jobe@digiblu.com",
-    "rd_email": "mustapha.jobe@digiblu.com",
+    "pcm_email": "alex.faulkner@digiblu.com",
+    "rd_email": "alex.faulkner@digiblu.com",
 }
 
 # Output Settings
