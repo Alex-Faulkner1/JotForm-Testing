@@ -34,6 +34,15 @@ EMAILS = {
     "rd_email": "alex.faulkner@digiblu.com",
 }
 
+# Email Settings for IMAP
+EMAIL_CONFIG = {
+    "imap_server": "outlook.office365.com",  # For Outlook/Office365
+    "imap_port": 993,
+    "email": "alex.faulkner@digiblu.com",  # Your email address
+    "password": "",  # Leave empty - will prompt at runtime
+    "search_timeout": 60,  # Seconds to wait for email
+}
+
 # Output Settings
 OUTPUT_DIR = "output"
 CREATE_TIMESTAMPED_FOLDERS = True
