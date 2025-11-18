@@ -1,0 +1,272 @@
+[
+  {
+    "test_id": "TEST_001",
+    "form_type": "Sponsorship/Charitable Donation",
+    "scenario": "Happy Path",
+    "description": "All approvers approve - single approver (RCM)",
+    "test_data": {
+      "company_division": "Edmundson Electrical",
+      "location_number": "331",
+      "raised_by": "Test Automation",
+      "payment_type": "Sponsorship/Charitable Donation",
+      "description": "TEST_001: Happy Path - Single Approver",
+      "payee": "Test Charity",
+      "has_invoice": true,
+      "invoice_number": "INV001",
+      "value": "5000",
+      "bank_details_on_invoice": true
+    },
+    "approval_workflow": [
+      {
+        "stage": "RCM",
+        "approver_email": "alex.faulkner@digiblu.com",
+        "action": "Approve",
+        "notes": "First and only approver"
+      }
+    ],
+    "expected_outcome": "Form fully approved",
+    "expected_status": "APPROVED"
+  },
+  {
+    "test_id": "TEST_002",
+    "form_type": "Sponsorship/Charitable Donation",
+    "scenario": "App 1 Rejection",
+    "description": "First approver (PCM) rejects - form should be deleted",
+    "test_data": {
+      "company_division": "Edmundson Electrical",
+      "location_number": "331",
+      "raised_by": "Test Automation",
+      "payment_type": "Sponsorship/Charitable Donation",
+      "description": "TEST_002: App 1 Rejection",
+      "payee": "Test Charity",
+      "has_invoice": true,
+      "invoice_number": "INV002",
+      "value": "5000",
+      "bank_details_on_invoice": true
+    },
+    "approval_workflow": [
+      {
+        "stage": "PCM",
+        "approver_email": "alex.faulkner@digiblu.com",
+        "action": "Reject",
+        "notes": "First approver rejects"
+      }
+    ],
+    "expected_outcome": "Form DELETED",
+    "expected_status": "REJECTED"
+  },
+  {
+    "test_id": "TEST_003",
+    "form_type": "Sponsorship/Charitable Donation",
+    "scenario": "App 2 Rejects Initial",
+    "description": "PCM approves, RD rejects - should return to PCM",
+    "test_data": {
+      "company_division": "Edmundson Electrical",
+      "location_number": "331",
+      "raised_by": "Test Automation",
+      "payment_type": "Sponsorship/Charitable Donation",
+      "description": "TEST_003: App 2 Rejects",
+      "payee": "Test Charity",
+      "has_invoice": true,
+      "invoice_number": "INV003",
+      "value": "15000",
+      "bank_details_on_invoice": true
+    },
+    "approval_workflow": [
+      {
+        "stage": "PCM",
+        "approver_email": "alex.faulkner@digiblu.com",
+        "action": "Approve",
+        "notes": "First approver approves"
+      },
+      {
+        "stage": "RD",
+        "approver_email": "alex.faulkner@digiblu.com",
+        "action": "Reject",
+        "notes": "Second approver rejects - returns to App 1"
+      }
+    ],
+    "expected_outcome": "Sent back to App 1 (PCM)",
+    "expected_status": "RETURNED_TO_APP1"
+  },
+  {
+    "test_id": "TEST_004",
+    "form_type": "Goods for Resale",
+    "scenario": "Happy Path",
+    "description": "All approvers approve - single approver (PCM)",
+    "test_data": {
+      "company_division": "Edmundson Electrical",
+      "location_number": "331",
+      "raised_by": "Test Automation",
+      "payment_type": "Goods for Resale",
+      "description": "TEST_004: Happy Path - Single Approver",
+      "payee": "Test Supplier",
+      "has_invoice": true,
+      "invoice_number": "INV004",
+      "value": "20000",
+      "bank_details_on_invoice": true
+    },
+    "approval_workflow": [
+      {
+        "stage": "PCM",
+        "approver_email": "alex.faulkner@digiblu.com",
+        "action": "Approve",
+        "notes": "First and only approver"
+      }
+    ],
+    "expected_outcome": "Form fully approved",
+    "expected_status": "APPROVED"
+  },
+  {
+    "test_id": "TEST_005",
+    "form_type": "Goods for Resale",
+    "scenario": "App 1 Rejection",
+    "description": "First approver (PCM) rejects - form should be deleted",
+    "test_data": {
+      "company_division": "Edmundson Electrical",
+      "location_number": "331",
+      "raised_by": "Test Automation",
+      "payment_type": "Goods for Resale",
+      "description": "TEST_005: App 1 Rejection",
+      "payee": "Test Supplier",
+      "has_invoice": true,
+      "invoice_number": "INV005",
+      "value": "20000",
+      "bank_details_on_invoice": true
+    },
+    "approval_workflow": [
+      {
+        "stage": "PCM",
+        "approver_email": "alex.faulkner@digiblu.com",
+        "action": "Reject",
+        "notes": "First approver rejects"
+      }
+    ],
+    "expected_outcome": "Form DELETED",
+    "expected_status": "REJECTED"
+  },
+  {
+    "test_id": "TEST_006",
+    "form_type": "Goods for Resale",
+    "scenario": "App 2 Rejects Initial",
+    "description": "PCM approves, RD rejects - should return to PCM",
+    "test_data": {
+      "company_division": "Edmundson Electrical",
+      "location_number": "331",
+      "raised_by": "Test Automation",
+      "payment_type": "Goods for Resale",
+      "description": "TEST_006: App 2 Rejects",
+      "payee": "Test Supplier",
+      "has_invoice": true,
+      "invoice_number": "INV006",
+      "value": "35000",
+      "bank_details_on_invoice": true
+    },
+    "approval_workflow": [
+      {
+        "stage": "PCM",
+        "approver_email": "alex.faulkner@digiblu.com",
+        "action": "Approve",
+        "notes": "First approver approves"
+      },
+      {
+        "stage": "RD",
+        "approver_email": "alex.faulkner@digiblu.com",
+        "action": "Reject",
+        "notes": "Second approver rejects - returns to App 1"
+      }
+    ],
+    "expected_outcome": "Sent back to App 1 (PCM)",
+    "expected_status": "RETURNED_TO_APP1"
+  },
+  {
+    "test_id": "TEST_007",
+    "form_type": "Expense Payments",
+    "scenario": "Happy Path",
+    "description": "All approvers approve - single approver (PCM)",
+    "test_data": {
+      "company_division": "Edmundson Electrical",
+      "location_number": "331",
+      "raised_by": "Test Automation",
+      "payment_type": "Expense Payments",
+      "description": "TEST_007: Happy Path - Single Approver",
+      "payee": "Test Expense Payee",
+      "has_invoice": true,
+      "invoice_number": "INV007",
+      "value": "8000",
+      "bank_details_on_invoice": true
+    },
+    "approval_workflow": [
+      {
+        "stage": "PCM",
+        "approver_email": "alex.faulkner@digiblu.com",
+        "action": "Approve",
+        "notes": "First and only approver"
+      }
+    ],
+    "expected_outcome": "Form fully approved",
+    "expected_status": "APPROVED"
+  },
+  {
+    "test_id": "TEST_008",
+    "form_type": "Expense Payments",
+    "scenario": "App 1 Rejection",
+    "description": "First approver (PCM) rejects - form should be deleted",
+    "test_data": {
+      "company_division": "Edmundson Electrical",
+      "location_number": "331",
+      "raised_by": "Test Automation",
+      "payment_type": "Expense Payments",
+      "description": "TEST_008: App 1 Rejection",
+      "payee": "Test Expense Payee",
+      "has_invoice": true,
+      "invoice_number": "INV008",
+      "value": "8000",
+      "bank_details_on_invoice": true
+    },
+    "approval_workflow": [
+      {
+        "stage": "PCM",
+        "approver_email": "alex.faulkner@digiblu.com",
+        "action": "Reject",
+        "notes": "First approver rejects"
+      }
+    ],
+    "expected_outcome": "Form DELETED",
+    "expected_status": "REJECTED"
+  },
+  {
+    "test_id": "TEST_009",
+    "form_type": "Expense Payments",
+    "scenario": "App 2 Rejects Initial",
+    "description": "PCM approves, RD rejects - should return to PCM",
+    "test_data": {
+      "company_division": "Edmundson Electrical",
+      "location_number": "331",
+      "raised_by": "Test Automation",
+      "payment_type": "Expense Payments",
+      "description": "TEST_009: App 2 Rejects",
+      "payee": "Test Expense Payee",
+      "has_invoice": true,
+      "invoice_number": "INV009",
+      "value": "12000",
+      "bank_details_on_invoice": true
+    },
+    "approval_workflow": [
+      {
+        "stage": "PCM",
+        "approver_email": "alex.faulkner@digiblu.com",
+        "action": "Approve",
+        "notes": "First approver approves"
+      },
+      {
+        "stage": "RD",
+        "approver_email": "alex.faulkner@digiblu.com",
+        "action": "Reject",
+        "notes": "Second approver rejects - returns to App 1"
+      }
+    ],
+    "expected_outcome": "Sent back to App 1 (PCM)",
+    "expected_status": "RETURNED_TO_APP1"
+  }
+]
