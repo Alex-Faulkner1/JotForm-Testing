@@ -2,142 +2,272 @@ import uuid
 import os
 import re
 import time
+import requests
+from bs4 import BeautifulSoup
 from yopmail import Yopmail
+
+# ================================================================
+# YOPMAIL INBOX ENDPOINT CONFIG (from your DevTools URL)
+# ================================================================
+#
+# Your captured URL:
+#   https://yopmail.com/inbox?login=5497b0691aac47498821b0a603017505
+#       &p=1&d=&ctrl=&yp=HBQH1ZwRkZwx0ZQZ0AQxlAGN&yj=QZmZ5ZQxlAGHkAwHmZGZmAQR
+#       &v=9.2&r_c=&id=&ad=0
+#
+# For scraping we only *need* the stable bits:
+#   - base path:  https://yopmail.com/inbox
+#   - login:      dynamic per mailbox
+#   - p:          page number
+#   - v, ad:      appear to be stable version/flag values
+#
+# The empty params (d, ctrl, r_c, id) can be dropped. yp/yj look like
+# session-ish tokens; YOPmail usually still returns HTML without them,
+# so we’ll omit them unless it misbehaves.
+
+YOPMAIL_INBOX_BASE = "https://yopmail.com/inbox"
+STATIC_INBOX_PARAMS = {
+    "v": "9.2",
+    "ad": "0",
+    "yp": "HBQH1ZwRkZwx0ZQZ0AQxlAGN",
+    "yj": "QZmZ5ZQxlAGHkAwHmZGZmAQR",
+}
+DYNAMIC_PARAM_KEY = None  # no timestamp-like param needed
+
+
+# ================================================================
+# Monkey-patch Yopmail.get_mail_ids to work with new YOPmail UI
+# ================================================================
+def _patched_get_mail_ids(self, page: int = 1, proxies=None):
+    """
+    Replacement for Yopmail.get_mail_ids that calls the iframe inbox
+    endpoint directly and scrapes message IDs from it.
+
+    Config is set at the top of this file.
+    """
+    if not YOPMAIL_INBOX_BASE:
+        raise RuntimeError(
+            "YOPMAIL_INBOX_BASE is empty. Please set it from DevTools (see comments)."
+        )
+
+    session = getattr(self, "session", requests.Session())
+
+    if proxies is None and getattr(self, "proxies", None):
+        proxies = self.proxies
+
+    username = getattr(self, "username", "").split("@")[0]
+
+    # Build query parameters
+    params = {
+        "login": username,
+        "p": page,
+    }
+    params.update(STATIC_INBOX_PARAMS)
+
+    # If there was a dynamic timestamp-like param (e.g. d=...), we’d set it here
+    if DYNAMIC_PARAM_KEY:
+        params[DYNAMIC_PARAM_KEY] = int(time.time() * 1000)
+
+    resp = session.get(YOPMAIL_INBOX_BASE, params=params, proxies=proxies)
+    try:
+        resp.raise_for_status()
+    except requests.HTTPError as e:
+        print(
+            f"[ERROR] Inbox request failed: {e}\n"
+            f"       URL tried: {resp.url}\n"
+            f"       Status: {resp.status_code}\n"
+            f"       Body (first 200 chars): {resp.text[:200]!r}"
+        )
+        raise
+
+    html = resp.text
+
+    if "Complete the CAPTCHA to continue" in html:
+        print("[WARN] YOPmail is showing a CAPTCHA. Automation is blocked.")
+        return []
+
+    soup = BeautifulSoup(html, "html.parser")
+    mail_ids = []
+
+    # ---- SELECTOR SECTION -------------------------------------
+    #
+    # We assume rows look something like:
+    #
+    #   <tr class="m" onclick="wm('e_ZwAbCdEf123')">...</tr>
+    #
+    # So: find any element with onclick=...wm('ID') and extract that ID.
+    # If this ends up empty, uncomment the debug print lower down and
+    # we can tweak it against the real iframe HTML.
+    # ------------------------------------------------------------
+    for tag in soup.find_all(attrs={"onclick": True}):
+        onclick = tag.get("onclick", "")
+        m = re.search(r"wm\('([^']+)'\)", onclick)
+        if m:
+            mail_ids.append(m.group(1))
+
+    # Debug if needed:
+    # if not mail_ids:
+    #     print("DEBUG inbox HTML (first 2000 chars):")
+    #     print(html[:2000])
+
+    return mail_ids
+
+
+# Apply the monkey-patch
+Yopmail.get_mail_ids = _patched_get_mail_ids
+
 
 # ================================================================
 # Save & Load Email from File
 # ================================================================
-def save_email(email, filename="yopmail_address.txt"):
+def save_email(email: str, filename: str = "yopmail_address.txt") -> None:
     with open(filename, "w") as f:
         f.write(email)
     print(f"[INFO] Saved generated email to {filename} (reference only)")
 
 
-def load_email(filename="yopmail_address.txt"):
-    if os.path.exists(filename):
-        with open(filename, "r") as f:
-            return f.read().strip()
+def load_email(filename: str = "yopmail_address.txt") -> str | None:
+    if not os.path.exists(filename):
+        print(f"[INFO] No saved YOPmail address found in {filename}.")
+        return None
+    with open(filename, "r") as f:
+        email = f.read().strip()
+    if email:
+        print(f"[INFO] Loaded saved YOPmail address from {filename}: {email}")
+        return email
+    print(f"[INFO] {filename} is empty.")
     return None
 
 
 # ================================================================
-# Generate a secure, unguessable YOPmail address
+# Email Generation / Selection
 # ================================================================
-def generate_secure_yopmail():
-    return f"{uuid.uuid4().hex}@yopmail.com"
+def create_random_email() -> str:
+    mailbox = uuid.uuid4().hex
+    return f"{mailbox}@yopmail.com"
+
+
+def ask_user_for_email() -> str:
+    print("----- YOPMAIL EMAIL HANDLER -----\n")
+    print("1 = Create new unguessable YOPmail")
+    print("2 = Use your own email (or load saved one)\n")
+
+    option = None
+    while option not in {"1", "2"}:
+        option = input("Enter option 1 or 2: ").strip()
+
+    if option == "1":
+        email = create_random_email()
+        print(f"[NEW YOPMAIL]: {email}")
+        save_email(email)
+        return email
+
+    email = input(
+        "Enter a YOPmail address (or press ENTER to load saved one): "
+    ).strip()
+
+    if not email:
+        saved = load_email()
+        if not saved:
+            saved = create_random_email()
+            save_email(saved)
+        email = saved
+
+    print(f"[USING EMAIL]: {email}")
+    return email
 
 
 # ================================================================
-# Extract Jotform signing link from email body
+# Extract JotForm edit link from email HTML
 # ================================================================
-def extract_jotform_link(html):
-    pattern = r"https://eel\.jotform\.com/edit/\d+\?[A-Za-z0-9]+"
+def extract_jotform_link(html: str) -> str | None:
+    """
+    Find an EEL JotForm *edit* link in the given HTML.
+
+    Example:
+      https://eel.jotform.com/edit/6392716199412043114?eapeo1e
+
+    Rules:
+      - always /edit/
+      - digits segment dynamic
+      - suffix either eapeo1e or eapet2e
+    """
+    pattern = r"(https://eel\.jotform\.com/edit/\d+\?(?:eapeo1e|eapet2e))"
     match = re.search(pattern, html)
     return match.group(1) if match else None
 
 
 # ================================================================
-# User Menu + Mailbox Selection
+# Main polling / retrieval logic
 # ================================================================
-print("\n----- YOPMAIL EMAIL HANDLER -----\n")
-print("1 = Create new unguessable YOPmail")
-print("2 = Use your own email (or load saved one)\n")
+def try_to_get_jotform_link(email: str) -> None:
+    mailbox_name = email.split("@")[0].strip().lower()
+    print(f"\n[INFO] Instantiating Yopmail for mailbox: '{mailbox_name}'")
 
-choice = input("Enter option 1 or 2: ").strip()
+    yp = Yopmail(mailbox_name, proxies=None)
 
+    max_attempts = 12
+    poll_interval = 5  # seconds
 
-# -------------------------------
-# OPTION 1 – Create new mailbox
-# -------------------------------
-if choice == "1":
-    email = generate_secure_yopmail()
-    save_email(email)  # Save for reference only
-    print(f"[NEW EMAIL CREATED]: {email}")
+    print(f"\n[INFO] Checking inbox with polling (max {max_attempts * poll_interval} seconds)...")
 
-# -------------------------------
-# OPTION 2 – User enters mailbox
-# -------------------------------
-elif choice == "2":
-    manual = input("Enter a YOPmail address (or press ENTER to load saved one): ").strip()
+    mail_ids: list[str] = []
 
-    if manual:
-        email = manual
-    else:
-        email = load_email()
-        if not email:
-            print("[WARNING] No saved email found → creating a new one.")
-            email = generate_secure_yopmail()
-            save_email(email)
+    for attempt in range(1, max_attempts + 1):
+        print(f"[ATTEMPT {attempt}/{max_attempts}] Fetching emails...")
 
-    print(f"[USING EMAIL]: {email}")
+        current_ids: list[str] = []
 
-# -------------------------------
-# INVALID INPUT
-# -------------------------------
-else:
-    raise ValueError("Invalid selection. Enter either 1 or 2.")
+        for page in range(1, 6):
+            try:
+                ids = yp.get_mail_ids(page=page)
+                if ids:
+                    current_ids.extend(ids)
+            except Exception as e:
+                print(f"[WARNING] Error fetching mail IDs on page {page}: {e}")
+                # If page 1 itself is broken, no point continuing pages
+                if page == 1:
+                    break
+                continue
 
+        if current_ids:
+            mail_ids = current_ids
+            break
 
-# ================================================================
-# Normalize mailbox for Yopmail()
-# ================================================================
-mailbox_name = email.split("@")[0].strip().lower()
+        if attempt < max_attempts:
+            print(f"[INFO] No emails yet, waiting {poll_interval} seconds...")
+            time.sleep(poll_interval)
 
-print(f"\n[INFO] Instantiating Yopmail for mailbox: '{mailbox_name}'\n")
+    if not mail_ids:
+        print("\n[INFO] No emails found after polling. The email might not have arrived yet.")
+        print(f"[TIP] Check manually at: https://yopmail.com/?login={mailbox_name}")
+        return
 
-yp = Yopmail(mailbox_name, proxies=None)
-
-
-# ================================================================
-# Retrieve inbox with polling (retry mechanism)
-# ================================================================
-print("[INFO] Checking inbox with polling (max 60 seconds)...")
-
-max_attempts = 12  # 12 attempts × 5 seconds = 60 seconds total
-attempt = 0
-mail_ids = []
-
-while attempt < max_attempts:
-    attempt += 1
-    print(f"[ATTEMPT {attempt}/{max_attempts}] Fetching emails...")
-
-    # Scan first 5 pages
-    temp_ids = []
-    for page in range(1, 6):
-        ids = yp.get_mail_ids(page=page)
-        if ids:
-            temp_ids.extend(ids)
-
-    if temp_ids:
-        mail_ids = temp_ids
-        print(f"[SUCCESS] Found {len(mail_ids)} email(s)!")
-        break
-
-    if attempt < max_attempts:
-        print("[INFO] No emails yet, waiting 5 seconds...")
-        time.sleep(5)
-
-if not mail_ids:
-    print("\n[INFO] No emails found after polling. The email might not have arrived yet.")
-    print(f"[TIP] Check manually at: https://yopmail.com/?login={mailbox_name}")
-else:
-    print(f"\n[INFO] Scanning {len(mail_ids)} email(s) for Jotform link...\n")
+    print(f"\n[INFO] Scanning {len(mail_ids)} email(s) for JotForm link...\n")
 
     found_link = False
 
     for mail_id in mail_ids:
         try:
             mail = yp.get_mail_body(mail_id, show_image=True)
-            html_body = getattr(mail, "body", "")
+            html_body = getattr(mail, "body", "") or str(mail)
 
             link = extract_jotform_link(html_body)
             if link:
                 print(f"[FOUND JOTFORM LINK]: {link}")
                 found_link = True
-                break  # Stop after finding first link
+                break
         except Exception as e:
             print(f"[WARNING] Error reading mail {mail_id}: {e}")
             continue
 
     if not found_link:
-        print("[INFO] No Jotform signing link found in inbox.")
+        print("[INFO] No JotForm edit link found in inbox.")
+
+
+# ================================================================
+# Entry point
+# ================================================================
+if __name__ == "__main__":
+    email = ask_user_for_email()
+    try_to_get_jotform_link(email)
