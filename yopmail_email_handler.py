@@ -7,80 +7,86 @@ from bs4 import BeautifulSoup
 from yopmail import Yopmail
 
 # ================================================================
-# YOPMAIL INBOX ENDPOINT CONFIG (from your DevTools URL)
-# ================================================================
-#
-# Your captured URL:
-#   https://yopmail.com/inbox?login=5497b0691aac47498821b0a603017505
-#       &p=1&d=&ctrl=&yp=HBQH1ZwRkZwx0ZQZ0AQxlAGN&yj=QZmZ5ZQxlAGHkAwHmZGZmAQR
-#       &v=9.2&r_c=&id=&ad=0
-#
-# For scraping we only *need* the stable bits:
-#   - base path:  https://yopmail.com/inbox
-#   - login:      dynamic per mailbox
-#   - p:          page number
-#   - v, ad:      appear to be stable version/flag values
-#
-# The empty params (d, ctrl, r_c, id) can be dropped. yp/yj look like
-# session-ish tokens; YOPmail usually still returns HTML without them,
-# so we’ll omit them unless it misbehaves.
-
-YOPMAIL_INBOX_BASE = "https://yopmail.com/inbox"
-STATIC_INBOX_PARAMS = {
-    "v": "9.2",
-    "ad": "0",
-    "yp": "HBQH1ZwRkZwx0ZQZ0AQxlAGN",
-    "yj": "QZmZ5ZQxlAGHkAwHmZGZmAQR",
-}
-DYNAMIC_PARAM_KEY = None  # no timestamp-like param needed
-
-
-# ================================================================
 # Monkey-patch Yopmail.get_mail_ids to work with new YOPmail UI
 # ================================================================
+YOPMAIL_MAIN_URL = "https://yopmail.com/"
+YOPMAIL_INBOX_URL = "https://yopmail.com/inbox"
+
+
 def _patched_get_mail_ids(self, page: int = 1, proxies=None):
     """
-    Replacement for Yopmail.get_mail_ids that calls the iframe inbox
-    endpoint directly and scrapes message IDs from it.
+    Replacement for Yopmail.get_mail_ids that:
 
-    Config is set at the top of this file.
+      1. Loads the main YOPmail page with ?login=<username> to
+         establish cookies/sessions.
+      2. Calls /inbox?login=<username>&p=<page> with browser-like
+         headers.
+      3. Scrapes message IDs from the HTML using wm('ID') onclicks.
+
+    This is as close as we can get to what the browser is doing,
+    without running a real browser.
     """
-    if not YOPMAIL_INBOX_BASE:
-        raise RuntimeError(
-            "YOPMAIL_INBOX_BASE is empty. Please set it from DevTools (see comments)."
-        )
 
     session = getattr(self, "session", requests.Session())
+
+    # Spoof browser-y headers
+    session.headers.setdefault(
+        "User-Agent",
+        (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/124.0.0.0 Safari/537.36"
+        ),
+    )
+    session.headers.setdefault("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+    session.headers.setdefault("Accept-Language", "en-GB,en;q=0.9")
+    session.headers.setdefault("Connection", "keep-alive")
 
     if proxies is None and getattr(self, "proxies", None):
         proxies = self.proxies
 
     username = getattr(self, "username", "").split("@")[0]
 
-    # Build query parameters
-    params = {
+    # Step 1: hit the main page to get cookies / session
+    main_params = {"login": username}
+    main_url = YOPMAIL_MAIN_URL
+    try:
+        resp_main = session.get(main_url, params=main_params, proxies=proxies)
+        resp_main.raise_for_status()
+    except requests.HTTPError as e:
+        print(
+            f"[ERROR] Initial YOPmail main-page request failed: {e}\n"
+            f"       URL tried: {resp_main.url if 'resp_main' in locals() else main_url}\n"
+        )
+        return []
+
+    # Step 2: call the inbox endpoint like the iframe does
+    inbox_params = {
         "login": username,
         "p": page,
     }
-    params.update(STATIC_INBOX_PARAMS)
 
-    # If there was a dynamic timestamp-like param (e.g. d=...), we’d set it here
-    if DYNAMIC_PARAM_KEY:
-        params[DYNAMIC_PARAM_KEY] = int(time.time() * 1000)
+    # Set a Referer header so we look like the iframe call
+    session.headers["Referer"] = resp_main.url
 
-    resp = session.get(YOPMAIL_INBOX_BASE, params=params, proxies=proxies)
     try:
-        resp.raise_for_status()
+        resp_inbox = session.get(YOPMAIL_INBOX_URL, params=inbox_params, proxies=proxies)
+        resp_inbox.raise_for_status()
     except requests.HTTPError as e:
+        body_preview = ""
+        try:
+            body_preview = resp_inbox.text[:200]
+        except Exception:
+            body_preview = "<no body>"
         print(
             f"[ERROR] Inbox request failed: {e}\n"
-            f"       URL tried: {resp.url}\n"
-            f"       Status: {resp.status_code}\n"
-            f"       Body (first 200 chars): {resp.text[:200]!r}"
+            f"       URL tried: {resp_inbox.url if 'resp_inbox' in locals() else YOPMAIL_INBOX_URL}\n"
+            f"       Status: {resp_inbox.status_code if 'resp_inbox' in locals() else 'unknown'}\n"
+            f"       Body (first 200 chars): {body_preview!r}"
         )
-        raise
+        return []
 
-    html = resp.text
+    html = resp_inbox.text
 
     if "Complete the CAPTCHA to continue" in html:
         print("[WARN] YOPmail is showing a CAPTCHA. Automation is blocked.")
@@ -89,15 +95,13 @@ def _patched_get_mail_ids(self, page: int = 1, proxies=None):
     soup = BeautifulSoup(html, "html.parser")
     mail_ids = []
 
-    # ---- SELECTOR SECTION -------------------------------------
+    # ------------------------------------------------------------
+    # SELECTOR SECTION:
     #
-    # We assume rows look something like:
-    #
+    # We expect something like:
     #   <tr class="m" onclick="wm('e_ZwAbCdEf123')">...</tr>
     #
-    # So: find any element with onclick=...wm('ID') and extract that ID.
-    # If this ends up empty, uncomment the debug print lower down and
-    # we can tweak it against the real iframe HTML.
+    # This captures all IDs passed into wm('...').
     # ------------------------------------------------------------
     for tag in soup.find_all(attrs={"onclick": True}):
         onclick = tag.get("onclick", "")
@@ -225,7 +229,6 @@ def try_to_get_jotform_link(email: str) -> None:
                     current_ids.extend(ids)
             except Exception as e:
                 print(f"[WARNING] Error fetching mail IDs on page {page}: {e}")
-                # If page 1 itself is broken, no point continuing pages
                 if page == 1:
                     break
                 continue

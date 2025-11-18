@@ -31,20 +31,66 @@ def make_test_pdf(filename="invoice.pdf", output_dir=None):
     return filepath
 
 
-def extract_efs_ref(page_content):
-    """Extract EFS Reference, handling HTML entities."""
+import re
+from html import unescape
+
+
+def extract_efs_ref(html_content: str) -> str | None:
+    """
+    Extract EFS Reference from HTML content.
+
+    Handles:
+    - HTML entities like &nbsp;
+    - Various spacing patterns
+    - Alphanumeric formats: DEV_PR395, TEST_001
+    - Numeric formats: EFS-123456, 123456
+
+    Args:
+        html_content: HTML content containing EFS reference
+
+    Returns:
+        EFS reference string or None if not found
+    """
+    # IMPORTANT: Decode HTML entities (&nbsp; → space, etc.)
+    decoded_html = unescape(html_content)
+
+    # Try multiple patterns in order of specificity
     patterns = [
-        r'EFS Ref:\s*(?:&nbsp;)?\s*([A-Z0-9_]+)',
-        r'([A-Z]+_PR\d+)',
+        # Pattern 1: "EFS Ref:" or "EFS Reference:" followed by alphanumeric
+        # \s* means "zero or more spaces"
+        r"EFS\s+Ref(?:erence)?:?\s*([A-Z]+_[A-Z0-9_]+)",
+
+        # Pattern 2: Already formatted with EFS- prefix
+        r"(?:EFS\s+)?Ref(?:erence)?:?\s*(EFS-\d+)",
+
+        # Pattern 3: Just numbers after "Reference:"
+        r"(?:EFS\s+)?Ref(?:erence)?:?\s*(\d{6})",
+
+        # Pattern 4: Generic "Reference:" with alphanumeric
+        r"Reference:?\s*([A-Z]+_[A-Z0-9_]+)",
+
+        # Pattern 5: EFS followed by space and numbers
+        r"\bEFS\s+(\d{6})\b",
+
+        # Pattern 6: In URLs or standalone
+        r"\bEFS-(\d{6})\b",
     ]
 
     for pattern in patterns:
-        match = re.search(pattern, page_content)
+        match = re.search(pattern, decoded_html, re.IGNORECASE)
         if match:
-            efs_ref = match.group(1)
-            efs_ref = html.unescape(efs_ref)
-            efs_ref = re.sub(r'<[^>]+>', '', efs_ref).strip()
-            return efs_ref
+            ref = match.group(1)
+
+            # If it's already prefixed with EFS-, return as-is
+            if ref.startswith("EFS-"):
+                return ref
+
+            # If it's purely numeric (6 digits), format as EFS-XXXXXX
+            if ref.isdigit() and len(ref) == 6:
+                return f"EFS-{ref}"
+
+            # Otherwise return as-is (e.g., DEV_PR395, TEST_001)
+            return ref
 
     return None
 

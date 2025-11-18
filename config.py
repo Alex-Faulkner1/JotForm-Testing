@@ -49,4 +49,4 @@ CREATE_TIMESTAMPED_FOLDERS = True
 
 # Workflow Settings
 WORKFLOW_WAIT_TIME = 10000  # milliseconds between stages
-REDIRECT_TIMEOUT = 3000  # milliseconds to wait for redirect
+REDIRECT_TIMEOUT = 10000  # milliseconds to wait for redirect
