@@ -10,7 +10,7 @@ JOTFORM_URL = "https://eel.jotform.com/252244495892972"
 # Browser Settings
 HEADLESS_MODE = False
 BROWSER_TIMEOUT = 30000  # milliseconds
-SLOW_MO = 500  # Slow down actions by 500ms for visibility
+SLOW_MO = 10  # Slow down actions by 10ms for visibility
 
 # Test Data - Inputter Stage
 TEST_DATA = {

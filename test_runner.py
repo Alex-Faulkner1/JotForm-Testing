@@ -103,38 +103,71 @@ class TestRunner:
         await self.page.wait_for_timeout(timeout)
         current_url = self.page.url
         
-        if current_url == initial_url:
-            print("⚠️  No redirect detected, retrying...")
-            await self.page.click("#input_98")
-            await self.page.wait_for_timeout(timeout)
-            
-            if self.page.url == initial_url:
-                print("❌ Redirect failed")
-                return False
-        
-        print(f"✅ Redirected to: {self.page.url}")
-        return True
-    
+        # Check if we're already on a different page (redirect happened)
+        if current_url != initial_url:
+            print(f"✅ Redirected to: {self.page.url}")
+            return True
+
+        # If still on same page, check for success indicators before retrying
+        try:
+            # Check if "Thank You" or success message is visible (redirect happened but URL didn't update)
+            success_indicators = [
+                "text=Thank You",
+                "text=Fully Approved",
+                "text=This Form is Fully Approved",
+            ]
+
+            for indicator in success_indicators:
+                element = await self.page.query_selector(indicator)
+                if element and await element.is_visible():
+                    print(f"✅ Success page detected (URL may not have changed)")
+                    return True
+        except:
+            pass
+
+        # Still on form page, try clicking submit again
+        print("⚠️  No redirect detected, retrying...")
+        try:
+            # Check if submit button still exists
+            submit_button = await self.page.query_selector("#input_98")
+            if submit_button:
+                await self.page.click("#input_98")
+                await self.page.wait_for_timeout(timeout)
+
+                # Check again if redirect happened
+                if self.page.url != initial_url:
+                    print(f"✅ Redirected to: {self.page.url}")
+                    return True
+        except Exception as e:
+            # Button may not exist anymore - check if we're on success page
+            if self.page.url != initial_url:
+                print(f"✅ Redirected to: {self.page.url}")
+                return True
+            print(f"⚠️  Error clicking submit button: {e}")
+
+        print("❌ Redirect failed")
+        return False
+
     async def select_approver(self):
         """Select approver from ActiveDirectory dropdown."""
         try:
             await self.page.wait_for_timeout(3000)
             frames = self.page.frames
-            
+
             ad_frames = [(i, f) for i, f in enumerate(frames)
                         if "ActiveDirectoryDropDown.html" in (f.url or "")]
-            
+
             if not ad_frames:
                 print("⚠️  No ActiveDirectory iframe found")
                 return
-            
+
             for frame_idx, frame in ad_frames:
                 try:
                     dropdown = await frame.query_selector("#input_ADDropdown")
                     if dropdown:
                         await frame.wait_for_timeout(1000)
                         options = await dropdown.query_selector_all("option")
-                        
+
                         if len(options) > 1:
                             await frame.select_option("#input_ADDropdown",
                                                      value=await options[1].get_attribute("value"))
@@ -143,42 +176,49 @@ class TestRunner:
                             return
                 except:
                     continue
-            
+
             print("⚠️  Could not select approver automatically")
         except Exception as e:
             print(f"⚠️  Error selecting approver: {e}")
-    
+
     async def fill_form(self, test_data: dict):
         """Fill the JotForm with test data."""
         print("\n" + "=" * 60)
         print("Filling Form")
         print("=" * 60)
-        
+
         await self.page.goto(JOTFORM_URL)
         await self.page.wait_for_timeout(2000)
-        
+
         # Company/Division
         await self.page.select_option("#input_123", label=test_data["company_division"])
         print(f"✓ Company/Division: {test_data['company_division']}")
-        
+
         # Location Number
         await self.page.fill("#input_124", test_data["location_number"])
         print(f"✓ Location Number: {test_data['location_number']}")
-        
+
         # Raised By
         await self.page.fill("#input_131", test_data["raised_by"])
         print(f"✓ Raised By: {test_data['raised_by']}")
-        
+
         # Payment Request Date (auto-filled)
         date_value = await self.page.input_value("#lite_mode_130")
         print(f"✓ Payment Request Date: {date_value}")
-        
+
         # Payment Request Type
         await self.page.select_option("#input_543", label=test_data["payment_type"])
         print(f"✓ Payment Type: {test_data['payment_type']}")
-        
-        # Wait for form to update based on payment type
-        await self.page.wait_for_timeout(2000)
+
+        # Wait longer for form to fully update based on payment type
+        # Goods for Resale and Expense Payments have complex conditional fields
+        if test_data["payment_type"] in ["Goods for Resale", "Expense Payments"]:
+            await self.page.wait_for_timeout(5000)  # 5 seconds for complex forms
+        else:
+            await self.page.wait_for_timeout(2000)  # 2 seconds for simpler forms
+
+        # Scroll to ensure fields are in viewport
+        await self.page.evaluate("window.scrollBy(0, 300)")
 
         # Description (required for some payment types)
         try:
@@ -194,6 +234,49 @@ class TestRunner:
         except Exception as e:
             print(f"ℹ️  Payee field not available for this payment type")
 
+        # Payment in Advance (Goods for Resale specific)
+        if "payment_in_advance" in test_data:
+            try:
+                # Wait longer for conditional fields to appear
+                await self.page.wait_for_timeout(2000)
+
+                # Wait for the field to be visible
+                await self.page.wait_for_selector("#label_input_845_0", timeout=5000, state="visible")
+
+                if test_data["payment_in_advance"]:
+                    await self.page.click("#label_input_845_0")  # Yes
+                    print("✓ Payment in Advance: Yes")
+                else:
+                    await self.page.click("#label_input_845_1")  # No
+                    print("✓ Payment in Advance: No")
+            except Exception as e:
+                print(f"⚠️  Payment in Advance field error: {e}")
+
+        # How Many Payable Documents (Goods for Resale specific)
+        if "payable_documents_count" in test_data:
+            try:
+                # Wait for dropdown to appear
+                await self.page.wait_for_selector("#input_849", timeout=5000, state="visible")
+                await self.page.select_option("#input_849", label=test_data["payable_documents_count"])
+                print(f"✓ Payable Documents Count: {test_data['payable_documents_count']}")
+            except Exception as e:
+                print(f"⚠️  Payable Documents field error: {e}")
+
+        # Is Currency GBP (Goods for Resale specific)
+        if "currency_gbp" in test_data:
+            try:
+                # Wait for field to appear
+                await self.page.wait_for_selector("#label_input_553_0", timeout=5000, state="visible")
+
+                if test_data["currency_gbp"]:
+                    await self.page.click("#label_input_553_0")  # Yes
+                    print("✓ Currency GBP: Yes")
+                else:
+                    await self.page.click("#label_input_553_1")  # No
+                    print("✓ Currency GBP: No")
+            except Exception as e:
+                print(f"⚠️  Currency GBP field error: {e}")
+
         # Has Invoice (may vary by payment type)
         if test_data.get("has_invoice", False):
             try:
@@ -202,16 +285,32 @@ class TestRunner:
                 if invoice_radio:
                     await self.page.click(has_invoice_selector)
                     print("✓ Has invoice: Yes")
-                    await self.page.wait_for_timeout(1000)  # Wait for conditional fields
+                    await self.page.wait_for_timeout(2000)  # Wait longer for conditional fields
 
-                    # Upload PDF
+                    # Scroll to invoice section
+                    await self.page.evaluate("window.scrollBy(0, 200)")
+
+                    # Upload PDF (different field for Goods for Resale)
                     try:
                         pdf_filename = f"invoice_{test_data['invoice_number']}.pdf"
                         make_test_pdf(pdf_filename)
-                        upload_field = await self.page.query_selector("#input_558")
+
+                        # Try Goods for Resale upload field first
+                        if test_data.get("payment_type") == "Goods for Resale":
+                            # Field for "Attach Your Picking Note/Sales Invoice"
+                            upload_field = await self.page.query_selector("#input_875")
+                            if not upload_field:
+                                # Fallback to standard field
+                                upload_field = await self.page.query_selector("#input_558")
+                        else:
+                            # Standard invoice upload field
+                            upload_field = await self.page.query_selector("#input_558")
+
                         if upload_field:
-                            await self.page.set_input_files("#input_558", pdf_filename)
+                            await upload_field.set_input_files(pdf_filename)
                             print(f"✓ Uploaded PDF: {pdf_filename}")
+                        else:
+                            print(f"⚠️  Invoice upload field not found")
                     except Exception as e:
                         print(f"⚠️  Could not upload PDF: {e}")
 
@@ -234,7 +333,7 @@ class TestRunner:
                     except Exception as e:
                         print(f"⚠️  Could not fill invoice date: {e}")
 
-                    # Bank details on invoice
+                    # Bank details on invoice (for Sponsorship/Charitable Donation)
                     if test_data.get("bank_details_on_invoice", False):
                         try:
                             bank_details_selector = "#label_input_607_0"
@@ -243,20 +342,44 @@ class TestRunner:
                                 await self.page.click(bank_details_selector)
                                 print("✓ Bank details on invoice: Yes")
                         except Exception as e:
-                            print(f"⚠️  Could not select bank details option: {e}")
+                            print(f"ℹ️  Bank details on invoice option not available")
                 else:
                     print("ℹ️  Has invoice radio button not found")
             except Exception as e:
                 print(f"⚠️  Could not process invoice section: {e}")
 
-        # Value
+        # Bank Account Details on Invoice (separate question for Goods for Resale)
+        if test_data.get("bank_details_on_invoice", False) and test_data.get("payment_type") == "Goods for Resale":
+            try:
+                await self.page.wait_for_timeout(1000)
+                # Check for the separate bank details question
+                bank_account_selector = "#label_input_608_0"  # Goods for Resale specific
+                bank_radio = await self.page.query_selector(bank_account_selector)
+                if bank_radio:
+                    await self.page.click(bank_account_selector)
+                    print("✓ Bank Account Details on Invoice: Yes")
+            except Exception as e:
+                print(f"ℹ️  Bank Account Details question not available")
+
+        # Value (different field structure for Goods for Resale)
         try:
-            value_field = await self.page.query_selector("#input_844")
-            if value_field:
+            if test_data.get("payment_type") == "Goods for Resale":
+                # For Goods for Resale, fill the "Goods (£)" field
+                # Scroll to Total Values section
+                await self.page.evaluate("window.scrollBy(0, 400)")
+                await self.page.wait_for_timeout(1000)
+
+                # Try to find and fill Goods field
+                goods_field = await self.page.query_selector("#input_855")
+                if goods_field:
+                    await self.page.fill("#input_855", test_data["value"])
+                    print(f"✓ Goods Value: £{test_data['value']}")
+                else:
+                    print("⚠️  Goods value field not found")
+            else:
+                # Standard value field for other payment types
                 await self.page.fill("#input_844", test_data["value"])
                 print(f"✓ Value: £{test_data['value']}")
-            else:
-                print("⚠️  Value field not found - may have different ID for this payment type")
         except Exception as e:
             print(f"⚠️  Could not fill value field: {e}")
 
@@ -412,31 +535,55 @@ class TestRunner:
                 await self.page.click(reject_selector)
                 print(f"✓ Selected: Reject")
 
-                # Wait for rejection reason field to appear
-                await self.page.wait_for_timeout(1000)
+                # Wait for rejection reason field to appear (it appears dynamically after clicking Reject)
+                rejection_text = f"Automated test rejection at {stage_name} stage - EFS {efs_ref}"
+                filled = False
 
-                # Fill rejection reason if field exists
+                # Try to find and fill the rejection reason field
+                # The field usually appears within 3 seconds of clicking Reject
                 try:
-                    rejection_reason_selectors = [
-                        "#input_237",  # Common rejection reason field
-                        "textarea[name*='reason']",
-                        "textarea[placeholder*='reason' i]",
+                    # Try different selectors with explicit waits
+                    selectors_to_try = [
+                        ("textarea[name*='q237']", "name-based"),
+                        ("#input_237", "ID-based"),
+                        ("textarea[name*='reason' i]", "name with 'reason'"),
+                        ("textarea[aria-label*='reason' i]", "aria-label"),
                     ]
 
-                    for selector in rejection_reason_selectors:
+                    for selector, selector_type in selectors_to_try:
                         try:
-                            reason_field = await self.page.query_selector(selector)
-                            if reason_field:
-                                is_visible = await reason_field.is_visible()
-                                if is_visible:
-                                    rejection_text = f"Automated test rejection at {stage_name} stage - EFS {efs_ref}"
-                                    await self.page.fill(selector, rejection_text)
-                                    print(f"✓ Rejection reason: {rejection_text}")
-                                    break
-                        except:
+                            # Wait up to 5 seconds for this selector to appear and be visible
+                            await self.page.wait_for_selector(selector, timeout=5000, state="visible")
+
+                            # Field is visible, fill it
+                            await self.page.fill(selector, rejection_text)
+                            print(f"✓ Rejection reason filled ({selector_type}): {rejection_text}")
+                            filled = True
+                            break
+                        except Exception:
+                            # This selector didn't work, try next one
                             continue
-                except Exception:
-                    pass  # Rejection reason might not be required
+
+                    if not filled:
+                        # Last resort - try any visible textarea
+                        try:
+                            textareas = await self.page.query_selector_all("textarea")
+                            for textarea in textareas:
+                                if await textarea.is_visible():
+                                    current_value = await textarea.input_value()
+                                    if not current_value or len(current_value.strip()) == 0:
+                                        await textarea.fill(rejection_text)
+                                        print(f"✓ Rejection reason filled (generic textarea): {rejection_text}")
+                                        filled = True
+                                        break
+                        except:
+                            pass
+
+                except Exception as e:
+                    print(f"⚠️  Error finding rejection reason field: {e}")
+
+                if not filled:
+                    print(f"⚠️  Could not find rejection reason field to auto-fill - please fill manually")
             else:
                 return {"success": False, "reason": f"Unknown action: {action}"}
         except Exception as e:
