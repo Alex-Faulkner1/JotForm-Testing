@@ -57,10 +57,23 @@ class TestRunner:
     """Main test runner class."""
 
     def __init__(self, test_suite_file: str, output_folder: str = "test_results",
-                 auto_retrieve_links: bool = True):
+                 auto_retrieve_links: bool = True, auto_submit_approvals: bool = True,
+                 workflow_wait_time: float = 3.0):  # Reduced from 10.0
+        """
+        Initialize test runner.
+        
+        Args:
+            test_suite_file: Path to JSON test suite
+            output_folder: Folder for test results
+            auto_retrieve_links: Auto-retrieve approval links from Gmail
+            auto_submit_approvals: Skip manual review for approve actions
+            workflow_wait_time: Seconds to wait for JotForm workflows (default 3.0)
+        """
         self.test_suite_file = test_suite_file
         self.output_folder = output_folder
         self.auto_retrieve_links = auto_retrieve_links
+        self.auto_submit_approvals = auto_submit_approvals
+        self.workflow_wait_time = workflow_wait_time
         self.test_cases = []
         self.results = []
         self.page = None
@@ -87,6 +100,8 @@ class TestRunner:
         self.user_email = email
         print(f"✅ Using email: {self.user_email}")
         print(f"🤖 Auto-retrieve links: {'ENABLED' if self.auto_retrieve_links else 'DISABLED'}")
+        print(f"⚡ Auto-submit approvals: {'ENABLED' if self.auto_submit_approvals else 'DISABLED'}")
+        print(f"⏱️  Workflow wait time: {self.workflow_wait_time}s")
         print()
 
     def get_approval_link(self, stage_name: str, efs_ref: str) -> str:
@@ -244,9 +259,30 @@ class TestRunner:
         date_value = await self.page.input_value("#lite_mode_130")
         print(f"✓ Payment Request Date: {date_value}")
 
-        # Payment Request Type
-        await self.page.select_option("#input_543", label=test_data["payment_type"])
-        print(f"✓ Payment Type: {test_data['payment_type']}")
+        # Payment Request Type - WITH RETRY LOGIC
+        max_retries = 2
+        for attempt in range(max_retries):
+            try:
+                # Wait for dropdown to be ready
+                await self.page.wait_for_selector("#input_543", state="visible", timeout=10000)
+                await self.page.select_option("#input_543", label=test_data["payment_type"])
+                print(f"✓ Payment Type: {test_data['payment_type']}")
+                break
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    print(f"⚠️  Attempt {attempt + 1} failed: {e}")
+                    print("🔄 Refreshing page and retrying...")
+                    await self.page.reload()
+                    await self.page.wait_for_load_state("networkidle")
+                    await self.page.wait_for_timeout(3000)
+                    
+                    # Re-fill the initial fields
+                    await self.page.select_option("#input_123", label=test_data["company_division"])
+                    await self.page.fill("#input_124", test_data["location_number"])
+                    await self.page.fill("#input_131", test_data["raised_by"])
+                else:
+                    print(f"❌ Error selecting payment type: {e}")
+                    raise
 
         # Wait longer for form to fully update based on payment type
         # Goods for Resale and Expense Payments have complex conditional fields
@@ -272,51 +308,226 @@ class TestRunner:
         except Exception as e:
             print(f"ℹ️  Payee field not available for this payment type")
 
-        # Payment in Advance (Goods for Resale specific)
+        # ============================================================
+        # GOODS FOR RESALE / EXPENSE PAYMENTS - CORRECT ORDER & SELECTORS!
+        # Based on actual form HTML inspection
+        # ============================================================
+        
+        # STEP 1: Payment in Advance (appears immediately after Payment Type)
         if "payment_in_advance" in test_data:
             try:
-                # Wait longer for conditional fields to appear
+                print("\n🔹 Filling Goods for Resale conditional fields...")
+                # Wait for form to settle
                 await self.page.wait_for_timeout(2000)
-
-                # Wait for the field to be visible
-                await self.page.wait_for_selector("#label_input_845_0", timeout=5000, state="visible")
+                
+                # CORRECT SELECTOR: #label_input_544_0 (Yes) or #label_input_544_1 (No)
+                await self.page.wait_for_selector("#label_input_544_0", timeout=15000, state="visible")
 
                 if test_data["payment_in_advance"]:
-                    await self.page.click("#label_input_845_0")  # Yes
+                    await self.page.click("#label_input_544_0")  # Yes
                     print("✓ Payment in Advance: Yes")
                 else:
-                    await self.page.click("#label_input_845_1")  # No
+                    await self.page.click("#label_input_544_1")  # No
                     print("✓ Payment in Advance: No")
             except Exception as e:
                 print(f"⚠️  Payment in Advance field error: {e}")
-
-        # How Many Payable Documents (Goods for Resale specific)
+        
+        # STEP 2: How Many Payable Documents (after Payment in Advance)
         if "payable_documents_count" in test_data:
             try:
-                # Wait for dropdown to appear
-                await self.page.wait_for_selector("#input_849", timeout=5000, state="visible")
-                await self.page.select_option("#input_849", label=test_data["payable_documents_count"])
+                await self.page.wait_for_timeout(2000)
+                
+                # CORRECT SELECTOR: #input_549 (not #input_849!)
+                await self.page.wait_for_selector("#input_549", timeout=15000, state="visible")
+                await self.page.select_option("#input_549", label=test_data["payable_documents_count"])
                 print(f"✓ Payable Documents Count: {test_data['payable_documents_count']}")
+                
+                # Wait for conditional fields to appear after selection
+                await self.page.wait_for_timeout(3000)
+                print("   Waiting for conditional fields to appear...")
             except Exception as e:
-                print(f"⚠️  Payable Documents field error: {e}")
+                print(f"⚠️  Payable Documents dropdown error: {e}")
 
-        # Is Currency GBP (Goods for Resale specific)
+        # STEP 3: Currency GBP (after Payable Documents dropdown)
         if "currency_gbp" in test_data:
             try:
-                # Wait for field to appear
-                await self.page.wait_for_selector("#label_input_553_0", timeout=5000, state="visible")
+                # CORRECT SELECTOR: #label_input_619_0 (not #label_input_553_0!)
+                await self.page.wait_for_selector("#label_input_619_0", timeout=15000, state="visible")
 
                 if test_data["currency_gbp"]:
-                    await self.page.click("#label_input_553_0")  # Yes
+                    await self.page.click("#label_input_619_0")  # Yes
                     print("✓ Currency GBP: Yes")
                 else:
-                    await self.page.click("#label_input_553_1")  # No
+                    await self.page.click("#label_input_619_1")  # No
                     print("✓ Currency GBP: No")
             except Exception as e:
                 print(f"⚠️  Currency GBP field error: {e}")
 
+        # ============================================================
+        # STEP 4: Payable Document(s) Section
+        # This section appears after selecting payable documents count
+        # ============================================================
+        if test_data.get("payable_documents_count") == "1":
+            try:
+                print("\n🔹 Filling Payable Document(s) section...")
+                await self.page.wait_for_timeout(2000)
+                
+                # Scroll to ensure fields are visible
+                await self.page.evaluate("window.scrollBy(0, 300)")
+                
+                # Upload Document 1 - Attach Document
+                try:
+                    pdf_filename = f"invoice_{test_data.get('invoice_number', 'DOC1')}.pdf"
+                    make_test_pdf(pdf_filename)
+                    
+                    # Find file upload in Payable Document(s) section
+                    # The selector might be input_875 or a file input in that section
+                    upload_selectors = [
+                        "input[type='file'][id*='input_875']",
+                        "input[type='file'][name*='q875']",
+                        "#input_875"
+                    ]
+                    
+                    uploaded = False
+                    for selector in upload_selectors:
+                        try:
+                            file_input = await self.page.query_selector(selector)
+                            if file_input and await file_input.is_visible():
+                                await file_input.set_input_files(pdf_filename)
+                                print(f"✓ Uploaded Payable Document: {pdf_filename}")
+                                uploaded = True
+                                break
+                        except:
+                            continue
+                    
+                    if not uploaded:
+                        print(f"⚠️  Could not find payable document upload field")
+                except Exception as e:
+                    print(f"⚠️  Document upload error: {e}")
+                
+                # Document 1 - Document Number
+                if "invoice_number" in test_data:
+                    try:
+                        # Likely input_876 based on JotForm patterns
+                        await self.page.fill("#input_876", test_data["invoice_number"])
+                        print(f"✓ Document Number: {test_data['invoice_number']}")
+                    except Exception as e:
+                        print(f"⚠️  Document number error: {e}")
+                
+                # Document 1 - Document Date
+                try:
+                    today = datetime.now().strftime("%d/%m/%Y")
+                    # Date picker likely #lite_mode_877
+                    await self.page.fill("#lite_mode_877", today)
+                    print(f"✓ Document Date: {today}")
+                except Exception as e:
+                    print(f"⚠️  Document date error: {e}")
+                
+                # Document 1 - Goods (£)
+                if "value" in test_data:
+                    try:
+                        # Goods value field - likely input_878
+                        goods_value = test_data["value"]
+                        await self.page.fill("#input_878", goods_value)
+                        print(f"✓ Goods (£): {goods_value}")
+                    except Exception as e:
+                        print(f"⚠️  Goods value error: {e}")
+                
+                # Document 1 - Carriage (£) - Optional
+                try:
+                    await self.page.fill("#input_879", "0")
+                    print(f"✓ Carriage (£): 0")
+                except:
+                    pass
+                
+                # Document 1 - VAT (£)
+                if "value" in test_data:
+                    try:
+                        # Calculate VAT as 20% of goods value
+                        vat_amount = str(int(float(test_data["value"]) * 0.2))
+                        await self.page.fill("#input_880", vat_amount)
+                        print(f"✓ VAT (£): {vat_amount}")
+                    except Exception as e:
+                        print(f"⚠️  VAT error: {e}")
+                
+                # Document 1 - Subtotal (£)
+                if "value" in test_data:
+                    try:
+                        # Subtotal = Goods + VAT
+                        subtotal = str(int(float(test_data["value"]) * 1.2))
+                        await self.page.fill("#input_881", subtotal)
+                        print(f"✓ Subtotal (£): {subtotal}")
+                    except Exception as e:
+                        print(f"⚠️  Subtotal error: {e}")
+                
+                # Document 1 - Less Settlement Discount - Optional
+                try:
+                    await self.page.fill("#input_882", "0")
+                except:
+                    pass
+                
+                # Total Payable is auto-calculated
+                
+            except Exception as e:
+                print(f"⚠️  Error in Payable Documents section: {e}")
+
+        # ============================================================
+        # STEP 5: Bank Account Details on Invoice
+        # ============================================================
+        if test_data.get("bank_details_on_invoice", False) and test_data.get("payment_type") == "Goods for Resale":
+            try:
+                await self.page.wait_for_timeout(1000)
+                await self.page.wait_for_selector("#label_input_569_0", timeout=10000, state="visible")
+                await self.page.click("#label_input_569_0")  # Yes
+                print("✓ Bank Account Details on Invoice: Yes")
+            except Exception as e:
+                print(f"⚠️  Bank Account Details error: {e}")
+
+        # ============================================================
+        # STEP 6: OTHER ATTACHMENTS - Picking Note/Sales Invoice
+        # ============================================================
+        if test_data.get("payment_type") == "Goods for Resale":
+            try:
+                print("\n🔹 Uploading Picking Note/Sales Invoice...")
+                await self.page.wait_for_timeout(1000)
+                
+                # Scroll to OTHER ATTACHMENTS section
+                await self.page.evaluate("window.scrollBy(0, 400)")
+                
+                # Create picking note PDF
+                picking_note_filename = f"picking_note_{test_data.get('invoice_number', 'PN')}.pdf"
+                make_test_pdf(picking_note_filename)
+                
+                # CORRECT SELECTOR: #input_644 (from HTML inspection)
+                picking_note_selectors = [
+                    "#input_644",  # Correct ID from HTML
+                    "input[type='file'][id='input_644']",
+                    "input[type='file'][name*='q644']",
+                ]
+                
+                uploaded = False
+                for selector in picking_note_selectors:
+                    try:
+                        file_input = await self.page.query_selector(selector)
+                        if file_input:
+                            await file_input.set_input_files(picking_note_filename)
+                            print(f"✓ Uploaded Picking Note: {picking_note_filename}")
+                            uploaded = True
+                            break
+                    except:
+                        continue
+                
+                if not uploaded:
+                    print(f"⚠️  Could not find picking note upload field (tried #input_644)")
+            except Exception as e:
+                print(f"⚠️  Picking note upload error: {e}")
+
+        # End of Goods for Resale conditional fields
+        # ============================================================
+
         # Has Invoice (may vary by payment type)
-        if test_data.get("has_invoice", False):
+        # Skip for Goods for Resale - already handled above in Payable Documents section
+        if test_data.get("has_invoice", False) and test_data.get("payment_type") != "Goods for Resale":
             try:
                 has_invoice_selector = "#label_input_604_0"
                 invoice_radio = await self.page.query_selector(has_invoice_selector)
@@ -513,8 +724,8 @@ class TestRunner:
             return {"success": False, "reason": "No approval link provided"}
 
         # Wait for workflows
-        print(f"⏳ Waiting {WORKFLOW_WAIT_TIME/1000}s for workflows...")
-        await self.page.wait_for_timeout(WORKFLOW_WAIT_TIME)
+        print(f"⏳ Waiting {self.workflow_wait_time}s for workflows...")
+        await self.page.wait_for_timeout(int(self.workflow_wait_time * 1000))
 
         # Navigate to approval form
         await self.page.goto(approval_link)
@@ -633,8 +844,12 @@ class TestRunner:
                 "screenshot": screenshot_path
             }
 
-        # Submit
-        input(f"\n⏸️  Review {stage_name} form and press ENTER to submit...")
+        # Submit - Skip review for approvals if auto_submit is enabled
+        if action == "Approve" and self.auto_submit_approvals:
+            print(f"⚡ Auto-submitting approval...")
+        else:
+            # For rejections or when auto_submit is disabled, ask for manual review
+            input(f"\n⏸️  Review {stage_name} form and press ENTER to submit...")
 
         initial_url = self.page.url
         await self.page.click("#input_98")
@@ -721,6 +936,32 @@ class TestRunner:
                 # If rejected at App 2, should return to App 1
                 if stage_result.get("action") == "Reject" and stage["stage"] in ["RD", "COO"]:
                     result.actual_outcome = "Sent back to App 1"
+                    
+                    # VALIDATE: Check for return-to-PCM email
+                    print("\n" + "=" * 60)
+                    print("🔍 Validating Return-to-PCM Email")
+                    print("=" * 60)
+                    print(f"After RD rejection, form should return to PCM...")
+                    print(f"Checking for new PCM approval email for {efs_ref}...")
+                    
+                    try:
+                        # Try to get the return-to-PCM approval link
+                        return_link = self.get_approval_link("PCM", efs_ref)
+                        
+                        if return_link and "eapeo1e" in return_link:
+                            print(f"✅ VALIDATION PASSED: Return-to-PCM email found!")
+                            print(f"   Email contains PCM approval link with eapeo1e suffix")
+                            print(f"🔗 {return_link}")
+                            result.notes = f"Return email validated: {return_link}"
+                        else:
+                            print(f"⚠️  VALIDATION WARNING: Could not find return-to-PCM email")
+                            print(f"   Expected email with eapeo1e suffix (PCM stage)")
+                            result.notes = "Return email not found or invalid"
+                    except Exception as e:
+                        print(f"⚠️  Error during return email validation: {e}")
+                        result.notes = f"Return email validation error: {e}"
+                    
+                    print("=" * 60)
                     break
 
             # Determine final outcome
@@ -927,7 +1168,9 @@ async def main():
     runner = TestRunner(
         test_suite_file="test_suite.json",
         output_folder="test_results",
-        auto_retrieve_links=True  # Enable automatic email link retrieval
+        auto_retrieve_links=True,      # Enable automatic email link retrieval
+        auto_submit_approvals=True,    # Skip manual review for approvals
+        workflow_wait_time=3.0         # Reduced from 10s to 3s
     )
     await runner.run_all_tests()
 

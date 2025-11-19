@@ -57,10 +57,23 @@ class TestRunner:
     """Main test runner class."""
 
     def __init__(self, test_suite_file: str, output_folder: str = "test_results",
-                 auto_retrieve_links: bool = True):
+                 auto_retrieve_links: bool = True, auto_submit_approvals: bool = True,
+                 workflow_wait_time: float = 3.0):  # Reduced from 10.0
+        """
+        Initialize test runner.
+        
+        Args:
+            test_suite_file: Path to JSON test suite
+            output_folder: Folder for test results
+            auto_retrieve_links: Auto-retrieve approval links from Gmail
+            auto_submit_approvals: Skip manual review for approve actions
+            workflow_wait_time: Seconds to wait for JotForm workflows (default 3.0)
+        """
         self.test_suite_file = test_suite_file
         self.output_folder = output_folder
         self.auto_retrieve_links = auto_retrieve_links
+        self.auto_submit_approvals = auto_submit_approvals
+        self.workflow_wait_time = workflow_wait_time
         self.test_cases = []
         self.results = []
         self.page = None
@@ -87,6 +100,8 @@ class TestRunner:
         self.user_email = email
         print(f"✅ Using email: {self.user_email}")
         print(f"🤖 Auto-retrieve links: {'ENABLED' if self.auto_retrieve_links else 'DISABLED'}")
+        print(f"⚡ Auto-submit approvals: {'ENABLED' if self.auto_submit_approvals else 'DISABLED'}")
+        print(f"⏱️  Workflow wait time: {self.workflow_wait_time}s")
         print()
 
     def get_approval_link(self, stage_name: str, efs_ref: str) -> str:
@@ -244,9 +259,30 @@ class TestRunner:
         date_value = await self.page.input_value("#lite_mode_130")
         print(f"✓ Payment Request Date: {date_value}")
 
-        # Payment Request Type
-        await self.page.select_option("#input_543", label=test_data["payment_type"])
-        print(f"✓ Payment Type: {test_data['payment_type']}")
+        # Payment Request Type - WITH RETRY LOGIC
+        max_retries = 2
+        for attempt in range(max_retries):
+            try:
+                # Wait for dropdown to be ready
+                await self.page.wait_for_selector("#input_543", state="visible", timeout=10000)
+                await self.page.select_option("#input_543", label=test_data["payment_type"])
+                print(f"✓ Payment Type: {test_data['payment_type']}")
+                break
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    print(f"⚠️  Attempt {attempt + 1} failed: {e}")
+                    print("🔄 Refreshing page and retrying...")
+                    await self.page.reload()
+                    await self.page.wait_for_load_state("networkidle")
+                    await self.page.wait_for_timeout(3000)
+                    
+                    # Re-fill the initial fields
+                    await self.page.select_option("#input_123", label=test_data["company_division"])
+                    await self.page.fill("#input_124", test_data["location_number"])
+                    await self.page.fill("#input_131", test_data["raised_by"])
+                else:
+                    print(f"❌ Error selecting payment type: {e}")
+                    raise
 
         # Wait longer for form to fully update based on payment type
         # Goods for Resale and Expense Payments have complex conditional fields
@@ -278,8 +314,8 @@ class TestRunner:
                 # Wait longer for conditional fields to appear
                 await self.page.wait_for_timeout(2000)
 
-                # Wait for the field to be visible
-                await self.page.wait_for_selector("#label_input_845_0", timeout=5000, state="visible")
+                # Wait for the field to be visible - INCREASED TO 15s
+                await self.page.wait_for_selector("#label_input_845_0", timeout=15000, state="visible")
 
                 if test_data["payment_in_advance"]:
                     await self.page.click("#label_input_845_0")  # Yes
@@ -293,8 +329,8 @@ class TestRunner:
         # How Many Payable Documents (Goods for Resale specific)
         if "payable_documents_count" in test_data:
             try:
-                # Wait for dropdown to appear
-                await self.page.wait_for_selector("#input_849", timeout=5000, state="visible")
+                # Wait for dropdown to appear - INCREASED TO 15s
+                await self.page.wait_for_selector("#input_849", timeout=15000, state="visible")
                 await self.page.select_option("#input_849", label=test_data["payable_documents_count"])
                 print(f"✓ Payable Documents Count: {test_data['payable_documents_count']}")
             except Exception as e:
@@ -303,8 +339,8 @@ class TestRunner:
         # Is Currency GBP (Goods for Resale specific)
         if "currency_gbp" in test_data:
             try:
-                # Wait for field to appear
-                await self.page.wait_for_selector("#label_input_553_0", timeout=5000, state="visible")
+                # Wait for field to appear - INCREASED TO 15s
+                await self.page.wait_for_selector("#label_input_553_0", timeout=15000, state="visible")
 
                 if test_data["currency_gbp"]:
                     await self.page.click("#label_input_553_0")  # Yes
@@ -513,8 +549,8 @@ class TestRunner:
             return {"success": False, "reason": "No approval link provided"}
 
         # Wait for workflows
-        print(f"⏳ Waiting {WORKFLOW_WAIT_TIME/1000}s for workflows...")
-        await self.page.wait_for_timeout(WORKFLOW_WAIT_TIME)
+        print(f"⏳ Waiting {self.workflow_wait_time}s for workflows...")
+        await self.page.wait_for_timeout(int(self.workflow_wait_time * 1000))
 
         # Navigate to approval form
         await self.page.goto(approval_link)
@@ -633,8 +669,12 @@ class TestRunner:
                 "screenshot": screenshot_path
             }
 
-        # Submit
-        input(f"\n⏸️  Review {stage_name} form and press ENTER to submit...")
+        # Submit - Skip review for approvals if auto_submit is enabled
+        if action == "Approve" and self.auto_submit_approvals:
+            print(f"⚡ Auto-submitting approval...")
+        else:
+            # For rejections or when auto_submit is disabled, ask for manual review
+            input(f"\n⏸️  Review {stage_name} form and press ENTER to submit...")
 
         initial_url = self.page.url
         await self.page.click("#input_98")
@@ -721,6 +761,32 @@ class TestRunner:
                 # If rejected at App 2, should return to App 1
                 if stage_result.get("action") == "Reject" and stage["stage"] in ["RD", "COO"]:
                     result.actual_outcome = "Sent back to App 1"
+                    
+                    # VALIDATE: Check for return-to-PCM email
+                    print("\n" + "=" * 60)
+                    print("🔍 Validating Return-to-PCM Email")
+                    print("=" * 60)
+                    print(f"After RD rejection, form should return to PCM...")
+                    print(f"Checking for new PCM approval email for {efs_ref}...")
+                    
+                    try:
+                        # Try to get the return-to-PCM approval link
+                        return_link = self.get_approval_link("PCM", efs_ref)
+                        
+                        if return_link and "eapeo1e" in return_link:
+                            print(f"✅ VALIDATION PASSED: Return-to-PCM email found!")
+                            print(f"   Email contains PCM approval link with eapeo1e suffix")
+                            print(f"🔗 {return_link}")
+                            result.notes = f"Return email validated: {return_link}"
+                        else:
+                            print(f"⚠️  VALIDATION WARNING: Could not find return-to-PCM email")
+                            print(f"   Expected email with eapeo1e suffix (PCM stage)")
+                            result.notes = "Return email not found or invalid"
+                    except Exception as e:
+                        print(f"⚠️  Error during return email validation: {e}")
+                        result.notes = f"Return email validation error: {e}"
+                    
+                    print("=" * 60)
                     break
 
             # Determine final outcome
@@ -927,7 +993,9 @@ async def main():
     runner = TestRunner(
         test_suite_file="test_suite.json",
         output_folder="test_results",
-        auto_retrieve_links=True  # Enable automatic email link retrieval
+        auto_retrieve_links=True,      # Enable automatic email link retrieval
+        auto_submit_approvals=True,    # Skip manual review for approvals
+        workflow_wait_time=3.0         # Reduced from 10s to 3s
     )
     await runner.run_all_tests()
 

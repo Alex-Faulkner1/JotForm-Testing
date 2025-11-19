@@ -106,7 +106,7 @@
       "currency_gbp": true,
       "has_invoice": true,
       "invoice_number": "INV004",
-      "value": "20000",
+      "value": "1000",
       "bank_details_on_invoice": true
     },
     "approval_workflow": [
@@ -137,7 +137,7 @@
       "currency_gbp": true,
       "has_invoice": true,
       "invoice_number": "INV005",
-      "value": "20000",
+      "value": "1000",
       "bank_details_on_invoice": true
     },
     "approval_workflow": [
@@ -168,7 +168,7 @@
       "currency_gbp": true,
       "has_invoice": true,
       "invoice_number": "INV006",
-      "value": "35000",
+      "value": "1000",
       "bank_details_on_invoice": true
     },
     "approval_workflow": [
@@ -190,14 +190,14 @@
   },
   {
     "test_id": "TEST_007",
-    "form_type": "Expense Payments",
+    "form_type": "Expense Payment",
     "scenario": "Happy Path",
     "description": "All approvers approve - single approver (PCM)",
     "test_data": {
       "company_division": "Edmundson Electrical",
       "location_number": "331",
       "raised_by": "Test Automation",
-      "payment_type": "Expense Payments",
+      "payment_type": "Expense Payment",
       "description": "TEST_007: Happy Path - Single Approver",
       "payee": "Test Expense Payee",
       "payment_in_advance": false,
@@ -221,14 +221,14 @@
   },
   {
     "test_id": "TEST_008",
-    "form_type": "Expense Payments",
+    "form_type": "Expense Payment",
     "scenario": "App 1 Rejection",
     "description": "First approver (PCM) rejects - form should be deleted",
     "test_data": {
       "company_division": "Edmundson Electrical",
       "location_number": "331",
       "raised_by": "Test Automation",
-      "payment_type": "Expense Payments",
+      "payment_type": "Expense Payment",
       "description": "TEST_008: App 1 Rejection",
       "payee": "Test Expense Payee",
       "payment_in_advance": false,
@@ -252,14 +252,14 @@
   },
   {
     "test_id": "TEST_009",
-    "form_type": "Expense Payments",
+    "form_type": "Expense Payment",
     "scenario": "App 2 Rejects Initial",
     "description": "PCM approves, RD rejects - should return to PCM",
     "test_data": {
       "company_division": "Edmundson Electrical",
       "location_number": "331",
       "raised_by": "Test Automation",
-      "payment_type": "Expense Payments",
+      "payment_type": "Expense Payment",
       "description": "TEST_009: App 2 Rejects",
       "payee": "Test Expense Payee",
       "payment_in_advance": false,
