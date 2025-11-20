@@ -518,6 +518,148 @@ class TestRunner:
                 print(f"⚠️  Error in Payable Documents section: {e}")
 
         # ============================================================
+        # STEP 4.5: GL Codes (EXPENSE PAYMENT ONLY)
+        # ============================================================
+        if test_data.get("payment_type") == "Expense Payment":
+            try:
+                print("\n🔹 Filling GL Codes section (Expense Payment)...")
+                await self.page.wait_for_timeout(2000)
+                
+                # Scroll to ensure GL Codes section is visible
+                await self.page.evaluate("window.scrollBy(0, 200)")
+                
+                # STEP 4.5.1: Select "How Many GL Codes?"
+                # This is a dropdown that appears after Payable Documents for Expense Payment
+                try:
+                    # Wait for the dropdown to appear
+                    await self.page.wait_for_timeout(1000)
+                    
+                    # Try to find the GL Codes dropdown
+                    # It should be a select element with "How Many GL Codes" in the label
+                    selects = await self.page.query_selector_all("select")
+                    gl_codes_dropdown = None
+                    
+                    # Find the GL Codes dropdown (should be after payable documents dropdown)
+                    # Usually it's the 3rd or 4th select on the page
+                    for i, select in enumerate(selects):
+                        try:
+                            is_visible = await select.is_visible()
+                            is_enabled = await select.is_enabled()
+                            if is_visible and is_enabled:
+                                # Try to get nearby label text
+                                parent = await select.evaluate_handle("el => el.closest('.form-line')")
+                                if parent:
+                                    label_text = await parent.evaluate("el => el.textContent")
+                                    if "gl code" in label_text.lower() or "how many" in label_text.lower():
+                                        gl_codes_dropdown = select
+                                        print(f"   Found GL Codes dropdown (select #{i})")
+                                        break
+                        except:
+                            continue
+                    
+                    if not gl_codes_dropdown:
+                        # Fallback: try by index (usually 3rd or 4th select)
+                        visible_selects = []
+                        for select in selects:
+                            try:
+                                if await select.is_visible() and await select.is_enabled():
+                                    visible_selects.append(select)
+                            except:
+                                pass
+                        
+                        # GL Codes dropdown is usually the 3rd visible select
+                        # (0: Company, 1: Payment Type, 2: Payable Docs, 3: GL Codes)
+                        if len(visible_selects) > 3:
+                            gl_codes_dropdown = visible_selects[3]
+                            print(f"   Using select by index (3rd visible select)")
+                        elif len(visible_selects) > 2:
+                            gl_codes_dropdown = visible_selects[2]
+                            print(f"   Using select by index (2nd visible select)")
+                    
+                    if gl_codes_dropdown:
+                        # Select "1" from the dropdown
+                        await gl_codes_dropdown.select_option(label="1")
+                        print(f"✓ How Many GL Codes: 1")
+                        
+                        # Wait for GL Code fields to appear
+                        await self.page.wait_for_timeout(3000)
+                        print("   Waiting for GL Code fields to appear...")
+                    else:
+                        print(f"⚠️  Could not find GL Codes dropdown")
+                
+                except Exception as e:
+                    print(f"⚠️  GL Codes dropdown error: {e}")
+                
+                # STEP 4.5.2: Fill "GL Code 1" field
+                # This field appears after selecting the dropdown
+                try:
+                    # Get all visible text inputs again (new fields appeared)
+                    await self.page.wait_for_timeout(1000)
+                    
+                    text_inputs = await self.page.query_selector_all("input[type='text']:not([readonly])")
+                    visible_inputs = []
+                    for inp in text_inputs:
+                        try:
+                            is_visible = await inp.is_visible()
+                            is_enabled = await inp.is_enabled()
+                            if is_visible and is_enabled:
+                                visible_inputs.append(inp)
+                        except:
+                            pass
+                    
+                    print(f"   Found {len(visible_inputs)} visible text inputs (after GL dropdown)")
+                    
+                    # GL Code 1 should be one of the last visible text inputs
+                    # Try to find it by looking for a field near "GL Code" label
+                    gl_code_filled = False
+                    
+                    # Method 1: Try to find by proximity to label
+                    try:
+                        labels = await self.page.query_selector_all("label")
+                        for label in labels:
+                            label_text = await label.inner_text()
+                            if "gl code 1" in label_text.lower():
+                                # Found the label, find the input
+                                label_id = await label.get_attribute("for")
+                                if label_id:
+                                    gl_input = await self.page.query_selector(f"#{label_id}")
+                                    if gl_input:
+                                        await gl_input.fill("723")
+                                        print(f"✓ GL Code 1: 723")
+                                        gl_code_filled = True
+                                        break
+                    except:
+                        pass
+                    
+                    # Method 2: Use field order (GL Code 1 is typically field 10 or 11)
+                    if not gl_code_filled:
+                        if len(visible_inputs) > 10:
+                            try:
+                                await visible_inputs[10].fill("723")
+                                print(f"✓ GL Code 1: 723 (field index 10)")
+                                gl_code_filled = True
+                            except Exception as e:
+                                print(f"⚠️  GL Code 1 (index 10) error: {e}")
+                        
+                        # Try field 11 if 10 didn't work
+                        if not gl_code_filled and len(visible_inputs) > 11:
+                            try:
+                                await visible_inputs[11].fill("723")
+                                print(f"✓ GL Code 1: 723 (field index 11)")
+                                gl_code_filled = True
+                            except Exception as e:
+                                print(f"⚠️  GL Code 1 (index 11) error: {e}")
+                    
+                    if not gl_code_filled:
+                        print(f"⚠️  Could not fill GL Code 1 field")
+                
+                except Exception as e:
+                    print(f"⚠️  GL Code 1 field error: {e}")
+            
+            except Exception as e:
+                print(f"⚠️  Error in GL Codes section: {e}")
+
+        # ============================================================
         # STEP 5: Bank Account Details on Invoice
         # ============================================================
         if test_data.get("bank_details_on_invoice", False) and test_data.get("payment_type") == "Goods for Resale":
@@ -661,9 +803,11 @@ class TestRunner:
             except Exception as e:
                 print(f"ℹ️  Bank Account Details question not available")
 
-        # Value (different field structure for Goods for Resale)
+        # Value (different field structure for Goods for Resale and Expense Payment)
         try:
-            if test_data.get("payment_type") == "Goods for Resale":
+            payment_type = test_data.get("payment_type")
+            
+            if payment_type == "Goods for Resale":
                 # For Goods for Resale, fill the "Goods (£)" field
                 # Scroll to Total Values section
                 await self.page.evaluate("window.scrollBy(0, 400)")
@@ -676,8 +820,12 @@ class TestRunner:
                     print(f"✓ Goods Value: £{test_data['value']}")
                 else:
                     print("⚠️  Goods value field not found")
+            elif payment_type == "Expense Payment":
+                # For Expense Payment, value is calculated from payable documents section
+                # No separate value field to fill - skip this step
+                print(f"ℹ️  Expense Payment value calculated from payable documents")
             else:
-                # Standard value field for other payment types
+                # Standard value field for other payment types (Sponsorship, etc.)
                 await self.page.fill("#input_844", test_data["value"])
                 print(f"✓ Value: £{test_data['value']}")
         except Exception as e:
@@ -701,7 +849,8 @@ class TestRunner:
             print(f"⚠️  Could not fill PCM email: {e}")
 
         print("=" * 60)
-        input("\n⏸️  Review form and press ENTER to submit...")
+        # input("\n⏸️  Review form and press ENTER to submit...")
+        print("⚡ Auto-submitting Stage 1 (no manual review)...")
 
     async def submit_stage1(self) -> str:
         """Submit Stage 1 and extract EFS reference."""
@@ -895,12 +1044,13 @@ class TestRunner:
                 "screenshot": screenshot_path
             }
 
-        # Submit - Skip review for approvals if auto_submit is enabled
-        if action == "Approve" and self.auto_submit_approvals:
-            print(f"⚡ Auto-submitting approval...")
-        else:
-            # For rejections or when auto_submit is disabled, ask for manual review
-            input(f"\n⏸️  Review {stage_name} form and press ENTER to submit...")
+        # Always auto-submit approvals/rejections without manual pause
+        print(f"⚡ Auto-submitting {stage_name} {action} (no manual review)...")
+        # if action == "Approve" and self.auto_submit_approvals:
+        #     print(f"⚡ Auto-submitting approval...")
+        # else:
+        #     # For rejections or when auto_submit is disabled, ask for manual review
+        #     input(f"\n⏸️  Review {stage_name} form and press ENTER to submit...")
 
         initial_url = self.page.url
         await self.page.click("#input_98")
